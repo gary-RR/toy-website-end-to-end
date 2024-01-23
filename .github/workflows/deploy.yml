@@ -12,6 +12,9 @@ on:
       reviewApiUrl:
         required: true
         type: string
+      sqlServerAdministratorLogin:
+        required: true
+        type: string
     secrets:
       AZURE_CLIENT_ID:
         required: true
@@ -21,7 +24,8 @@ on:
         required: true
       reviewApiKey:
         required: true
-
+      sqlServerAdministratorLoginPassword:
+        required: true
 jobs:
   validate:
      runs-on: ubuntu-latest
@@ -44,6 +48,8 @@ jobs:
            environmentType=${{ inputs.environmentType }}
            reviewApiUrl=${{ inputs.reviewApiUrl }}
            reviewApiKey=${{ secrets.reviewApiKey }}
+           sqlServerAdministratorLogin=${{ inputs.sqlServerAdministratorLogin }}
+           sqlServerAdministratorLoginPassword=${{ secrets.sqlServerAdministratorLoginPassword }}
          deploymentMode: Validate
      - if: inputs.environmentType == 'Production'
        uses: azure/arm-deploy@v1
@@ -56,6 +62,8 @@ jobs:
            environmentType=${{ inputs.environmentType }}
            reviewApiUrl=${{ inputs.reviewApiUrl }}
            reviewApiKey=${{ secrets.reviewApiKey }}
+           sqlServerAdministratorLogin=${{ inputs.sqlServerAdministratorLogin }}
+           sqlServerAdministratorLoginPassword=${{ secrets.sqlServerAdministratorLoginPassword }}
          additionalArguments: --what-if
 
   deploy:
@@ -65,6 +73,10 @@ jobs:
     outputs:
       appServiceAppName: ${{ steps.deploy.outputs.appServiceAppName }}
       appServiceAppHostName: ${{ steps.deploy.outputs.appServiceAppHostName }}
+      storageAccountName: ${{ steps.deploy.outputs.storageAccountName }}
+      storageAccountImagesBlobContainerName: ${{ steps.deploy.outputs.storageAccountImagesBlobContainerName }}
+      sqlServerFullyQualifiedDomainName: ${{ steps.deploy.outputs.sqlServerFullyQualifiedDomainName }}
+      sqlDatabaseName: ${{ steps.deploy.outputs.sqlDatabaseName }}    
     steps:
     - uses: actions/checkout@v3
     - uses: azure/login@v1
@@ -85,6 +97,8 @@ jobs:
            environmentType=${{ inputs.environmentType }}
            reviewApiUrl=${{ inputs.reviewApiUrl }}
            reviewApiKey=${{ secrets.reviewApiKey }}
+           sqlServerAdministratorLogin=${{ inputs.sqlServerAdministratorLogin }}
+           sqlServerAdministratorLoginPassword=${{ secrets.sqlServerAdministratorLoginPassword }}
 
   deploy-website:
     needs: deploy
@@ -102,10 +116,80 @@ jobs:
       name: Deploy website
       with:
         app-name: ${{ needs.deploy.outputs.appServiceAppName }}
-        package: website/publish.zip         
+        package: website/publish.zip
+        
+  deploy-database:
+    needs: deploy
+    environment: ${{ inputs.environmentType }}
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/download-artifact@v3
+    - uses: azure/login@v1
+      name: Sign in to Azure
+      with:
+        client-id: ${{ secrets.AZURE_CLIENT_ID }}
+        tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+        subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+    - uses: azure/sql-action@v1.2
+      name: Deploy DACPAC to database
+      with:
+        server-name: ${{ needs.deploy.outputs.sqlServerFullyQualifiedDomainName }}
+        connection-string: ${{ format('Server={0};Initial Catalog={1};User Id={2};Password={3};', needs.deploy.outputs.sqlServerFullyQualifiedDomainName, needs.deploy.outputs.sqlDatabaseName, inputs.sqlServerAdministratorLogin, secrets.sqlServerAdministratorLoginPassword) }}
+        dacpac-package: database/ToyCompany.Database.dacpac
+
+
+  seed-database:
+    needs:
+    - deploy
+    - deploy-database
+    environment: ${{ inputs.environmentType }}
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    - uses: azure/login@v1
+      name: Sign in to Azure
+      with:
+        client-id: ${{ secrets.AZURE_CLIENT_ID }}
+        tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+        subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+    - if: inputs.environmentType != 'Production'
+      uses: azure/sql-action@v1.2
+      name: Add test data to database
+      with:
+        server-name: ${{ needs.deploy.outputs.sqlServerFullyQualifiedDomainName }}
+        connection-string: ${{ format('Server={0};Initial Catalog={1};User Id={2};Password={3};', needs.deploy.outputs.sqlServerFullyQualifiedDomainName, needs.deploy.outputs.sqlDatabaseName, inputs.sqlServerAdministratorLogin, secrets.sqlServerAdministratorLoginPassword) }}
+        sql-file: 'deploy/sample-data/Toys.sql'
+        
+  seed-storage-account:
+    needs: deploy
+    environment: ${{ inputs.environmentType }}
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    - uses: azure/login@v1
+      name: Sign in to Azure
+      with:
+        client-id: ${{ secrets.AZURE_CLIENT_ID }}
+        tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+        subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+    - if: inputs.environmentType != 'Production'
+      uses: azure/CLI@v1
+      name: Upload sample images
+      with:
+        inlineScript: |
+            az storage blob upload-batch \
+                --account-name ${{ needs.deploy.outputs.storageAccountName }} \
+                --destination ${{ needs.deploy.outputs.storageAccountImagesBlobContainerName }} \
+                --source 'deploy/sample-data/toyimages'
+
   smoke-test:
     runs-on: ubuntu-latest
-    needs: deploy
+    needs:
+    - deploy
+    - deploy-website
+    - deploy-database
+    - seed-database
+    - seed-storage-account
     steps:
     - uses: actions/checkout@v3
     - run: |
@@ -117,3 +201,5 @@ jobs:
           -CI
       name: Run smoke tests
       shell: pwsh
+
+  
