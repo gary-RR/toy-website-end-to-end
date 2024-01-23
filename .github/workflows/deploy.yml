@@ -26,6 +26,7 @@ on:
         required: true
       sqlServerAdministratorLoginPassword:
         required: true
+
 jobs:
   validate:
      runs-on: ubuntu-latest
@@ -76,7 +77,7 @@ jobs:
       storageAccountName: ${{ steps.deploy.outputs.storageAccountName }}
       storageAccountImagesBlobContainerName: ${{ steps.deploy.outputs.storageAccountImagesBlobContainerName }}
       sqlServerFullyQualifiedDomainName: ${{ steps.deploy.outputs.sqlServerFullyQualifiedDomainName }}
-      sqlDatabaseName: ${{ steps.deploy.outputs.sqlDatabaseName }}    
+      sqlDatabaseName: ${{ steps.deploy.outputs.sqlDatabaseName }}
     steps:
     - uses: actions/checkout@v3
     - uses: azure/login@v1
@@ -117,7 +118,7 @@ jobs:
       with:
         app-name: ${{ needs.deploy.outputs.appServiceAppName }}
         package: website/publish.zip
-        
+
   deploy-database:
     needs: deploy
     environment: ${{ inputs.environmentType }}
@@ -136,7 +137,6 @@ jobs:
         server-name: ${{ needs.deploy.outputs.sqlServerFullyQualifiedDomainName }}
         connection-string: ${{ format('Server={0};Initial Catalog={1};User Id={2};Password={3};', needs.deploy.outputs.sqlServerFullyQualifiedDomainName, needs.deploy.outputs.sqlDatabaseName, inputs.sqlServerAdministratorLogin, secrets.sqlServerAdministratorLoginPassword) }}
         dacpac-package: database/ToyCompany.Database.dacpac
-
 
   seed-database:
     needs:
@@ -159,7 +159,7 @@ jobs:
         server-name: ${{ needs.deploy.outputs.sqlServerFullyQualifiedDomainName }}
         connection-string: ${{ format('Server={0};Initial Catalog={1};User Id={2};Password={3};', needs.deploy.outputs.sqlServerFullyQualifiedDomainName, needs.deploy.outputs.sqlDatabaseName, inputs.sqlServerAdministratorLogin, secrets.sqlServerAdministratorLoginPassword) }}
         sql-file: 'deploy/sample-data/Toys.sql'
-        
+
   seed-storage-account:
     needs: deploy
     environment: ${{ inputs.environmentType }}
@@ -178,9 +178,9 @@ jobs:
       with:
         inlineScript: |
             az storage blob upload-batch \
-                --account-name ${{ needs.deploy.outputs.storageAccountName }} \
-                --destination ${{ needs.deploy.outputs.storageAccountImagesBlobContainerName }} \
-                --source 'deploy/sample-data/toyimages'
+              --account-name ${{ needs.deploy.outputs.storageAccountName }} \
+              --destination ${{ needs.deploy.outputs.storageAccountImagesBlobContainerName }} \
+              --source 'deploy/sample-data/toyimages'
 
   smoke-test:
     runs-on: ubuntu-latest
@@ -201,5 +201,3 @@ jobs:
           -CI
       name: Run smoke tests
       shell: pwsh
-
-  
